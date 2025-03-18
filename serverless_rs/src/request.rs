@@ -9,6 +9,7 @@ use http::{Method, Uri};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::error::{Error, Result};
 
@@ -56,9 +57,22 @@ impl Request {
         self.method.as_ref()
     }
 
+    /// Returns the HTTP method as a string, if available
+    pub fn method_str(&self) -> Option<String> {
+        self.method.as_ref().map(|m| m.to_string())
+    }
+
     /// Sets the HTTP method for this request
-    pub fn with_method(mut self, method: Method) -> Self {
-        self.method = Some(method);
+    pub fn with_method(mut self, method: impl Into<Method>) -> Self {
+        self.method = Some(method.into());
+        self
+    }
+
+    /// Sets the HTTP method for this request using a string
+    pub fn with_method_str(mut self, method: impl AsRef<str>) -> Self {
+        if let Ok(m) = Method::from_str(method.as_ref()) {
+            self.method = Some(m);
+        }
         self
     }
 
@@ -67,9 +81,22 @@ impl Request {
         self.uri.as_ref()
     }
 
+    /// Returns the path portion of the URI, if available
+    pub fn path(&self) -> Option<String> {
+        self.uri.as_ref().map(|u| u.path().to_string())
+    }
+
     /// Sets the URI for this request
     pub fn with_uri(mut self, uri: Uri) -> Self {
         self.uri = Some(uri);
+        self
+    }
+
+    /// Sets the URI for this request using a string
+    pub fn with_path(mut self, path: impl AsRef<str>) -> Self {
+        if let Ok(uri) = Uri::from_str(path.as_ref()) {
+            self.uri = Some(uri);
+        }
         self
     }
 

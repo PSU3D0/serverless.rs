@@ -78,7 +78,10 @@ mod router;
 pub use context::Context;
 pub use error::{Error, Result};
 pub use handler::Handler;
-pub use info::{check_info_flag, display_info, FunctionInfo, RouteInfo};
+pub use info::{
+    check_info_flag, display_info, handle_info_request, parse_info_args, FunctionInfo,
+    OutputFormat, RouteInfo,
+};
 pub use request::Request;
 pub use requirements::{Requirements, Resource};
 pub use response::Response;
