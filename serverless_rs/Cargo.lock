@@ -292,6 +292,7 @@ dependencies = [
  "http",
  "serde",
  "serde_json",
+ "serverless_rs_macros",
  "thiserror",
  "tokio",
 ]
