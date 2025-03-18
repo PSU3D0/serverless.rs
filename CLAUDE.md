@@ -1,5 +1,11 @@
 # CLAUDE.md - Development Guidelines
 
+## Project Context
+
+serverless.rs is a universal serverless framework for Rust that enables developers to write platform-agnostic serverless functions and deploy them to multiple cloud providers with minimal platform-specific code. This framework addresses the challenge of serverless vendor lock-in by providing a unified abstraction layer.
+
+Follow `ai_specs/EXECUTION_PLAN.md` and `ai_specs/PROJECT_PRD.md`.
+
 ## Commands
 - Build: `cargo build`
 - Check: `cargo check --all-features`

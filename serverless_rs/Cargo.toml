@@ -1,0 +1,42 @@
+[package]
+name = "serverless_rs"
+version = "0.1.0"
+edition = "2021"
+description = "Universal serverless framework for Rust"
+authors = ["serverless.rs Team"]
+license = "MIT"
+repository = "https://github.com/serverless-rs/serverless-rs"
+documentation = "https://docs.rs/serverless_rs"
+readme = "../README.md"
+keywords = ["serverless", "aws", "cloudflare", "lambda", "workers"]
+categories = ["web-programming", "asynchronous"]
+
+[features]
+default = ["local"]
+aws = []
+cloudflare = []
+vercel = []
+azure = []
+gcp = []
+local = []
+
+[dependencies]
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+async-trait = "0.1"
+http = "0.2"
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1.25", features = ["rt", "macros"] }
+
+[workspace]
+members = [
+    ".",
+    "macros",
+]
+
+[lib]
+name = "serverless_rs"
+path = "src/lib.rs"
