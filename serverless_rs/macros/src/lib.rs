@@ -48,15 +48,12 @@ pub fn serverless(args: TokenStream, input: TokenStream) -> TokenStream {
     // Parse the function definition
     let input_fn = parse_macro_input!(input as ItemFn);
     let fn_name = &input_fn.sig.ident;
-    let fn_vis = &input_fn.vis;
     let fn_attrs = &input_fn.attrs;
 
     // Parse attribute arguments
     let mut name = None;
     let mut description = None;
     let mut platforms = Vec::new();
-
-    // A simpler implementation of attribute parsing since we're having issues with AttributeArgs
     let parser = |meta: ParseNestedMeta| {
         if meta.path.is_ident("name") {
             if let Ok(value) = meta.value() {
@@ -66,7 +63,6 @@ pub fn serverless(args: TokenStream, input: TokenStream) -> TokenStream {
             }
             return Ok(());
         }
-
         if meta.path.is_ident("description") {
             if let Ok(value) = meta.value() {
                 if let Ok(literal) = value.parse::<syn::LitStr>() {
@@ -75,18 +71,13 @@ pub fn serverless(args: TokenStream, input: TokenStream) -> TokenStream {
             }
             return Ok(());
         }
-
         if meta.path.is_ident("platforms") {
-            // Simple stub implementation, will be expanded in a full version
             platforms.push("aws".to_string());
             platforms.push("cloudflare".to_string());
             return Ok(());
         }
-
         Ok(())
     };
-
-    // Try to parse the arguments, but don't fail if there's an error
     let _ = syn::meta::parser(parser).parse(args);
 
     // Set default values
@@ -94,10 +85,8 @@ pub fn serverless(args: TokenStream, input: TokenStream) -> TokenStream {
     let description_str =
         description.unwrap_or_else(|| format!("Serverless function {}", fn_name_str));
 
-    // Generate the function information structure
+    // Generate the function information structure and platform adapters...
     let info_struct = generate_info_struct(&fn_name_str, &description_str, &platforms);
-
-    // Generate the platform-specific adapters
     let aws_adapter = generate_aws_adapter(&input_fn, &fn_name_str);
     let cloudflare_adapter = generate_cloudflare_adapter(&input_fn, &fn_name_str);
     let azure_adapter = generate_azure_adapter(&input_fn, &fn_name_str);
@@ -105,64 +94,42 @@ pub fn serverless(args: TokenStream, input: TokenStream) -> TokenStream {
     let vercel_adapter = generate_vercel_adapter(&input_fn, &fn_name_str);
     let local_adapter = generate_local_adapter(&input_fn, &fn_name_str);
 
-    // Generate the main handler implementation
+    // Generate the main handler implementation as module-level functions.
     let expanded = quote! {
         // Preserve the original function
         #(#fn_attrs)*
-        #fn_vis #input_fn
+        #input_fn
 
-        // Define function information for self-documentation
-        impl #fn_name {
-            /// Returns comprehensive function metadata including requirements, routes,
-            /// and platform support. Used for self-documentation and IaC integration.
-            pub fn function_info() -> serverless_rs::FunctionInfo {
-                let mut info = #info_struct;
-
-                // If this function has requirements defined, use them
-                if Self::has_requirements() {
-                    info = info.with_resources(Self::requirements());
-                }
-
-                // If this function has routes defined, add them
-                #[allow(unused_mut)]
-                let mut info = info;
-
-                // Use conditional compilation to check for has_route_info method
-                // This will only include route information if the function has the #[route] attribute
-                if Self::has_route_info() {
-                    info = info.add_route(Self::route_info());
-                }
-
-                info
+        // Module-level function implementations
+        pub fn function_info() -> serverless_rs::FunctionInfo {
+            let mut info = #info_struct;
+            if has_requirements() {
+                info = info.with_resources(requirements());
             }
-
-            /// Check if this function was called with --info flag
-            pub fn check_info() -> bool {
-                serverless_rs::check_info_flag()
+            if has_route_info() {
+                info = info.add_route(route_info());
             }
-
-            /// Display function information as JSON
-            pub fn display_info() {
-                serverless_rs::display_info(&Self::function_info());
-            }
-
-            /// Default requirements implementation if not explicitly defined
-            #[allow(dead_code)]
-            pub fn requirements() -> serverless_rs::Requirements {
-                serverless_rs::Requirements::new()
-            }
-
-            /// Check if this function has explicitly defined requirements
-            #[allow(dead_code)]
-            pub fn has_requirements() -> bool {
-                false
-            }
-
-            /// Check if this function has explicitly defined route information
-            #[allow(dead_code)]
-            pub fn has_route_info() -> bool {
-                false
-            }
+            info
+        }
+        pub fn check_info() -> bool {
+            serverless_rs::check_info_flag()
+        }
+        pub fn display_info() {
+            serverless_rs::display_info(&function_info());
+        }
+        #[allow(dead_code)]
+        pub fn requirements() -> serverless_rs::Requirements {
+            serverless_rs::Requirements::new()
+        }
+        #[allow(dead_code)]
+        pub fn has_requirements() -> bool { false }
+        #[allow(dead_code)]
+        pub fn has_route_info() -> bool { false }
+        // Optionally, if route_info is needed, you can add a stub:
+        #[allow(dead_code)]
+        pub fn route_info() -> serverless_rs::RouteInfo {
+            // This will be overridden if `#[route]` is used.
+            serverless_rs::RouteInfo::new("GET", "/")
         }
 
         // Platform-specific adapters
@@ -174,7 +141,16 @@ pub fn serverless(args: TokenStream, input: TokenStream) -> TokenStream {
         #local_adapter
     };
 
-    TokenStream::from(expanded)
+    // Wrap the generated code in a module named after the supplied name.
+    let mod_ident = syn::Ident::new(&fn_name_str, fn_name.span());
+    let wrapped = quote! {
+        pub mod #mod_ident {
+            use super::*;
+            #expanded
+        }
+    };
+
+    TokenStream::from(wrapped)
 }
 
 /// Generate the function information structure
@@ -187,23 +163,23 @@ fn generate_info_struct(
         quote! {
             // Add all enabled platforms
             #[cfg(feature = "aws")]
-            requirements = requirements.platform("aws");
+            { requirements = requirements.platform("aws"); }
             #[cfg(feature = "cloudflare")]
-            requirements = requirements.platform("cloudflare");
+            { requirements = requirements.platform("cloudflare"); }
             #[cfg(feature = "azure")]
-            requirements = requirements.platform("azure");
+            { requirements = requirements.platform("azure"); }
             #[cfg(feature = "gcp")]
-            requirements = requirements.platform("gcp");
+            { requirements = requirements.platform("gcp"); }
             #[cfg(feature = "vercel")]
-            requirements = requirements.platform("vercel");
+            { requirements = requirements.platform("vercel"); }
             #[cfg(feature = "local")]
-            requirements = requirements.platform("local");
+            { requirements = requirements.platform("local"); }
         }
     } else {
         let platform_tokens = platforms.iter().map(|p| {
             let platform = p.as_str();
             quote! {
-                requirements = requirements.platform(#platform);
+                { requirements = requirements.platform(#platform); }
             }
         });
         quote! {
@@ -212,27 +188,44 @@ fn generate_info_struct(
     };
 
     quote! {
-        let mut requirements = serverless_rs::Requirements::new();
-        #platforms_tokens
-
-        serverless_rs::FunctionInfo::new(#fn_name)
-            .with_description(#description)
-            .with_resources(requirements)
+        {
+            let mut requirements = serverless_rs::Requirements::new();
+            #platforms_tokens
+            serverless_rs::FunctionInfo::new(#fn_name)
+                .with_description(#description)
+                .with_resources(requirements)
+        }
     }
 }
 
 /// Generate the AWS Lambda adapter
-fn generate_aws_adapter(input_fn: &ItemFn, fn_name_str: &str) -> proc_macro2::TokenStream {
+///
+/// This function generates the AWS Lambda adapter code that integrates
+/// serverless.rs functions with the AWS Lambda runtime. It handles both
+/// direct invocations and API Gateway events.
+fn generate_aws_adapter(input_fn: &ItemFn, _fn_name_str: &str) -> proc_macro2::TokenStream {
     let fn_name = &input_fn.sig.ident;
 
     quote! {
         #[cfg(feature = "aws")]
         pub mod aws_lambda {
             use super::*;
+            use serverless_rs::platforms::aws;
 
-            // This is a placeholder for the AWS Lambda adapter
-            // It will be expanded in Step 4 per the execution plan
-            pub extern "C" fn handler(event: serverless_rs::Value, context: serverless_rs::Value) -> serverless_rs::Value {
+            // Helper function to handle async wrapper
+            fn handler_wrapper(req: serverless_rs::Request, ctx: &serverless_rs::Context) -> serverless_rs::Result<serverless_rs::Response> {
+                // Create a runtime to execute the async function
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                // Execute the async function and return the result
+                runtime.block_on(#fn_name(req, ctx))
+            }
+
+            // The main Lambda handler entry point
+            pub fn handler(event: serverless_rs::Value, context: serverless_rs::Value) -> serverless_rs::Value {
                 // Check if the function was called with --info flag
                 if #fn_name::check_info() {
                     #fn_name::display_info();
@@ -242,41 +235,72 @@ fn generate_aws_adapter(input_fn: &ItemFn, fn_name_str: &str) -> proc_macro2::To
                     });
                 }
 
-                // Get the Lambda runtime and execute the handler
-                // This is a simplified version for now
-                let runtime = std::thread::spawn(move || {
-                    let req = serverless_rs::Request::new()
-                        .with_raw_event(event.clone());
+                // Call the AWS Lambda handler with our wrapper function
+                aws::lambda_handler(handler_wrapper, event, context)
+            }
 
-                    let ctx = serverless_rs::Context::new()
-                        .with_request_id("aws-request-id")
-                        .with_function_name(#fn_name_str)
-                        .with_platform_data(context);
+            // A convenient entrypoint for API Gateway requests specifically
+            pub fn api_gateway(event: serverless_rs::Value, context: serverless_rs::Value) -> serverless_rs::Value {
+                // Check if the function was called with --info flag
+                if #fn_name::check_info() {
+                    #fn_name::display_info();
+                    return serverless_rs::json!({
+                        "statusCode": 200,
+                        "body": "Function information displayed"
+                    });
+                }
 
-                    match #fn_name(req, &ctx) {
-                        Ok(resp) => {
-                            serverless_rs::json!({
-                                "statusCode": resp.status(),
-                                "headers": resp.headers(),
-                                "body": String::from_utf8_lossy(resp.body()).to_string(),
-                                "isBase64Encoded": resp.is_base64()
-                            })
-                        },
-                        Err(err) => {
-                            serverless_rs::json!({
+                match aws::handle_api_gateway(handler_wrapper, event, context) {
+                    Ok(response) => {
+                        // Serialize the API Gateway response
+                        match serde_json::to_value(response) {
+                            Ok(json) => json,
+                            Err(e) => serverless_rs::json!({
                                 "statusCode": 500,
-                                "body": format!("Error: {}", err)
+                                "body": format!("Error serializing response: {}", e)
                             })
                         }
+                    },
+                    Err(e) => {
+                        // Return an error response for API Gateway
+                        serverless_rs::json!({
+                            "statusCode": 500,
+                            "body": format!("Error: {}", e)
+                        })
                     }
-                }).join().unwrap_or_else(|_| {
-                    serverless_rs::json!({
-                        "statusCode": 500,
-                        "body": "Internal Error: Handler panicked"
-                    })
-                });
+                }
+            }
 
-                runtime
+            // A convenient entrypoint for direct Lambda invocations
+            pub fn direct(event: serverless_rs::Value, context: serverless_rs::Value) -> serverless_rs::Value {
+                // Check if the function was called with --info flag
+                if #fn_name::check_info() {
+                    #fn_name::display_info();
+                    return serverless_rs::json!({
+                        "message": "Function information displayed"
+                    });
+                }
+
+                match aws::handle_direct_invocation(handler_wrapper, event, context) {
+                    Ok(response) => response,
+                    Err(e) => {
+                        // Return an error payload for direct invocation
+                        serverless_rs::json!({
+                            "error": e.to_string()
+                        })
+                    }
+                }
+            }
+
+            // Lambda custom runtime handler (for provided.al2, etc.)
+            pub fn custom_runtime() {
+                // Will be implemented in future versions
+                println!("AWS Lambda custom runtime not yet implemented");
+            }
+
+            // Export function info for IaC integration
+            pub fn function_info() -> serverless_rs::FunctionInfo {
+                #fn_name::function_info()
             }
         }
     }
@@ -290,6 +314,18 @@ fn generate_cloudflare_adapter(input_fn: &ItemFn, fn_name_str: &str) -> proc_mac
         #[cfg(feature = "cloudflare")]
         pub mod cloudflare_workers {
             use super::*;
+
+            // Helper function to handle async wrapper
+            fn handler_wrapper(req: serverless_rs::Request, ctx: &serverless_rs::Context) -> serverless_rs::Result<serverless_rs::Response> {
+                // Create a runtime to execute the async function
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                // Execute the async function and return the result
+                runtime.block_on(#fn_name(req, ctx))
+            }
 
             // This is a placeholder for the Cloudflare Workers adapter
             // It will be expanded in Step 5 per the execution plan
@@ -314,7 +350,7 @@ fn generate_cloudflare_adapter(input_fn: &ItemFn, fn_name_str: &str) -> proc_mac
                         .with_function_name(#fn_name_str)
                         .with_platform_data(env);
 
-                    match #fn_name(req, &ctx) {
+                    match handler_wrapper(req, &ctx) {
                         Ok(resp) => {
                             serverless_rs::json!({
                                 "status": resp.status(),
@@ -352,6 +388,18 @@ fn generate_azure_adapter(input_fn: &ItemFn, _fn_name_str: &str) -> proc_macro2:
         pub mod azure_functions {
             use super::*;
 
+            // Helper function to handle async wrapper
+            fn handler_wrapper(req: serverless_rs::Request, ctx: &serverless_rs::Context) -> serverless_rs::Result<serverless_rs::Response> {
+                // Create a runtime to execute the async function
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                // Execute the async function and return the result
+                runtime.block_on(#fn_name(req, ctx))
+            }
+
             // This is a placeholder for the Azure Functions adapter
             // It will be implemented in later steps
             pub fn run(context: serverless_rs::Value, request: serverless_rs::Value) -> serverless_rs::Value {
@@ -382,6 +430,18 @@ fn generate_gcp_adapter(input_fn: &ItemFn, _fn_name_str: &str) -> proc_macro2::T
         #[cfg(feature = "gcp")]
         pub mod gcp_functions {
             use super::*;
+
+            // Helper function to handle async wrapper
+            fn handler_wrapper(req: serverless_rs::Request, ctx: &serverless_rs::Context) -> serverless_rs::Result<serverless_rs::Response> {
+                // Create a runtime to execute the async function
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                // Execute the async function and return the result
+                runtime.block_on(#fn_name(req, ctx))
+            }
 
             // This is a placeholder for the Google Cloud Functions adapter
             // It will be implemented in later steps
@@ -414,6 +474,18 @@ fn generate_vercel_adapter(input_fn: &ItemFn, _fn_name_str: &str) -> proc_macro2
         pub mod vercel_functions {
             use super::*;
 
+            // Helper function to handle async wrapper
+            fn handler_wrapper(req: serverless_rs::Request, ctx: &serverless_rs::Context) -> serverless_rs::Result<serverless_rs::Response> {
+                // Create a runtime to execute the async function
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                // Execute the async function and return the result
+                runtime.block_on(#fn_name(req, ctx))
+            }
+
             // This is a placeholder for the Vercel Functions adapter
             // It will be implemented in later steps
             pub fn handler(request: serverless_rs::Value) -> serverless_rs::Value {
@@ -445,6 +517,18 @@ fn generate_local_adapter(input_fn: &ItemFn, fn_name_str: &str) -> proc_macro2::
         pub mod local_server {
             use super::*;
 
+            // Helper function to handle async wrapper
+            pub fn handler_wrapper(req: serverless_rs::Request, ctx: &serverless_rs::Context) -> serverless_rs::Result<serverless_rs::Response> {
+                // Create a runtime to execute the async function
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                // Execute the async function and return the result
+                runtime.block_on(#fn_name(req, ctx))
+            }
+
             // This is a placeholder for the local development server adapter
             // It will be expanded in Step 6 per the execution plan
             pub async fn serve_http(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -461,7 +545,7 @@ fn generate_local_adapter(input_fn: &ItemFn, fn_name_str: &str) -> proc_macro2::
             }
 
             pub fn handle_request(request: serverless_rs::Request, context: &serverless_rs::Context) -> serverless_rs::Result<serverless_rs::Response> {
-                #fn_name(request, context)
+                handler_wrapper(request, context)
             }
         }
     }
@@ -486,7 +570,6 @@ fn generate_local_adapter(input_fn: &ItemFn, fn_name_str: &str) -> proc_macro2::
 pub fn route(args: TokenStream, input: TokenStream) -> TokenStream {
     // Parse the function definition
     let input_fn = parse_macro_input!(input as ItemFn);
-    let fn_name = &input_fn.sig.ident;
 
     // Parse attribute arguments
     let args_span = proc_macro2::TokenStream::from(args);
@@ -534,16 +617,12 @@ pub fn route(args: TokenStream, input: TokenStream) -> TokenStream {
     let expanded = quote! {
         #input_fn
 
-        impl #fn_name {
-            /// Get the route information for this handler
-            pub fn route_info() -> serverless_rs::RouteInfo {
-                #route_builder
-            }
+        pub fn route_info() -> serverless_rs::RouteInfo {
+            #route_builder
+        }
 
-            /// Check if this handler has an explicit route defined
-            pub fn has_route_info() -> bool {
-                true
-            }
+        pub fn has_route_info() -> bool {
+            true
         }
     };
 
@@ -578,7 +657,6 @@ pub fn route(args: TokenStream, input: TokenStream) -> TokenStream {
 pub fn requirements(args: TokenStream, input: TokenStream) -> TokenStream {
     // Parse the function definition
     let input_fn = parse_macro_input!(input as ItemFn);
-    let fn_name = &input_fn.sig.ident;
 
     // Initialize collections to store the parsed requirements
     let mut recommended = Vec::new();
@@ -686,21 +764,20 @@ pub fn requirements(args: TokenStream, input: TokenStream) -> TokenStream {
         };
     }
 
-    // Generate the expanded function with requirements implementation
+    // Instead of generating an inherent impl block on fn_name (which is a function)
+    // we now generate free functions.
     let expanded = quote! {
         #input_fn
 
-        impl #fn_name {
-            /// Get the resource requirements for this function
-            pub fn requirements() -> serverless_rs::Requirements {
-                #requirements_builder
-                requirements
-            }
+        #[allow(dead_code)]
+        pub fn requirements() -> serverless_rs::Requirements {
+            #requirements_builder
+            requirements
+        }
 
-            /// Check if this function has explicitly defined requirements
-            pub fn has_requirements() -> bool {
-                true
-            }
+        #[allow(dead_code)]
+        pub fn has_requirements() -> bool {
+            true
         }
     };
 

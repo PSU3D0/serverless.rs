@@ -68,7 +68,7 @@ mod context;
 mod error;
 mod handler;
 mod info;
-mod platforms;
+pub mod platforms;
 mod request;
 mod requirements;
 mod response;

@@ -19,3 +19,4 @@ regex = "1.10.2"
 
 [dev-dependencies]
 serverless_rs = { path = ".." }
+trybuild = "1.0.85"
